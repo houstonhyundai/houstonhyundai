@@ -1,0 +1,28 @@
+jQuery(document).ready(function ($) {
+	// Mobile Tab Buttons
+	var divButton = $('div[role="button"]');
+	divButton.on('click', function($this) {
+		if($(this).siblings().hasClass('open') === false) {
+			$(this).attr('aria-expanded', true);
+		} else {
+			$(this).attr('aria-expanded', false);
+		}
+	});
+
+	$('.mobile-tab-close').on('click', function() {
+		$('.mobile-tab-label').attr('aria-expanded', false)
+	});
+
+	// Standard Buttons
+	$(function () {
+	    $('button').on('click', function (e) {
+	        var menuItem = $( e.currentTarget );
+
+	        if (menuItem.attr( 'aria-expanded') === 'true') {
+	            $(this).attr( 'aria-expanded', 'false');
+	        } else {
+	            $(this).attr( 'aria-expanded', 'true');
+	        }
+	    });
+	});
+});

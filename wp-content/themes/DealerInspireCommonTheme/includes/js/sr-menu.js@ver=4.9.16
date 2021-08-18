@@ -1,0 +1,59 @@
+jQuery(document).ready(function($) {
+
+	var srMenuToggle = $('.sr-close-site-menu, .sr-accessible-menu-button');
+	var closeButton = $('.sr-close-site-menu');
+
+	srMenuToggle.on("click", function () {
+	    $('#sr_site-menu').toggleClass('sr-menu-active');
+	    $('#sr_site-menu .widget:first-of-type ul li:first-of-type a').focus();
+	});
+
+	closeButton.on("click", function () {
+	    $('.sr-accessible-menu-button').focus();
+	});
+
+	// Add button to list items with submenus
+	var hasChildren = $('li.menu-item-has-children');
+	$('#sr-app').find(hasChildren).each(function() {
+		$(this).find('> a').after('<button class="sr-button" aria-label="Toggle Submenu" aria-expanded="false"><i class="fa fa-chevron-right" aria-hidden="true"></i></button>');
+	})
+
+	$('.sr-button').on('click', function (e) {
+	    $(this).parent().toggleClass('active');
+	});
+
+	if ($(srMenuToggle).length) {
+		// add all the elements inside srMenu which you want to make focusable
+		var  focusableElements =
+		    'button, [href], [tabindex]:not([tabindex="-1"])';
+		var srMenu = document.querySelector('#sr-app'); // select the srMenu by it's id
+
+		var firstFocusableElement = srMenu.querySelectorAll(focusableElements)[0]; // get first element to be focused inside srMenu
+		var focusableContent = srMenu.querySelectorAll(focusableElements);
+		var lastFocusableElement = focusableContent[focusableContent.length - 1]; // get last element to be focused inside srMenu
+
+		document.addEventListener('keydown', function(e) {
+		  var isTabPressed = e.key === 'Tab' || e.keyCode === 9;
+
+		  if (!isTabPressed) {
+		    return;
+		  }
+
+		  if (e.shiftKey) { // if shift key pressed for shift + tab combination
+		    if (document.activeElement === firstFocusableElement) {
+		      lastFocusableElement.focus(); // add focus for the last focusable element
+		      e.preventDefault();
+		    }
+		  } else { // if tab key is pressed
+		    if (document.activeElement === lastFocusableElement) { // if focused has reached to last focusable element then focus first focusable element after pressing tab
+		      firstFocusableElement.focus(); // add focus for the first focusable element
+		      e.preventDefault();
+		    }
+		  }
+		});
+
+		firstFocusableElement.focus();
+	}
+
+});
+

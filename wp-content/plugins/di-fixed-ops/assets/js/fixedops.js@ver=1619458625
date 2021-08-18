@@ -1,0 +1,79 @@
+jQuery(document).ready(function($){
+
+	$( '.difo-fancybox' ).fancybox();
+
+	_components = {
+		switchClass : function( el, from, to ){
+			el.removeClass( from ).addClass( to );
+		}
+	}
+	fixedops = {
+		disclaimer_show_text : "Show disclaimer",
+		disclaimer_hide_text : "Hide disclaimer",
+		init : function(){
+			this.disclaimerInit();
+			// auto select offer dependent on difo_offer={post_id} GET param
+			this.selectOffer();
+		},
+		selectOffer : function() {
+			if ($('#coupon-'+fixedops_global.getParams.difo_offer).length) {
+				$('.difo-wrapper div[id^=coupon-]').not('#coupon-'+fixedops_global.getParams.difo_offer).css('opacity', '0.5');
+
+				$('body').on('difo_slide_selected', function() {
+					var offset = ($('#header').length) ? ($('#header').outerHeight(true)+70) : 0;
+					$('html, body').animate({
+						scrollTop: $('#coupon-'+fixedops_global.getParams.difo_offer).offset().top - offset
+					}, 2000, 'swing', function() {
+						$('.difo-wrapper div[id^=coupon-]').animate({opacity : '1'}, 2000);
+					});
+				});
+				$('#coupon-'+fixedops_global.getParams.difo_offer).attr('data-difo-selected', 'true');
+			}
+		},
+		disclaimerInit : function(){
+			var self = this,
+				$disclaimer_wrap = $( 'div.coupon-disclaimer' );
+
+			if( fixedops_global.shortcode_atts.disclaimer != 'show' && $disclaimer_wrap.length )
+			{
+
+				$( '.coupon-disclaimer' ).on( 'click', '.show-disclaimer', function(){
+					var _class = $( this ).data( 'class' ),
+						action = $( this ).data( 'action' ),
+						$icon = $(this).find('i.fa');
+
+					// slide down
+					if( action == 'active' )
+					{
+						$( this ).data( 'action', 'disabled' ).find('.hide-text').text( self.disclaimer_show_text );
+						_components.switchClass( $icon, 'fa-chevron-down', 'fa-chevron-up' );
+						$( _class ).slideUp(300, 'swing', function(){
+							$( 'body' ).trigger( 'disclaimer_visibility' );
+						});
+					}
+					// slide up
+					else
+					{
+						$( this ).data( 'action', 'active' ).find('.hide-text').text( self.disclaimer_hide_text );
+						_components.switchClass( $icon, 'fa-chevron-up', 'fa-chevron-down' );
+						$( _class ).slideDown(300, 'swing', function(){
+							$( 'body' ).trigger( 'disclaimer_visibility' );
+						});
+					}
+
+
+					return false;
+				} );
+
+				$disclaimer_wrap.each( function( i, el ){
+					$( el ).wrapInner( '<div class="disclaimer-'+i+'" style="display:none;"></div>' ).prepend( '<a href="#" class="show-disclaimer" data-class=".disclaimer-' + i + '"><span class="hide-text">' + self.disclaimer_show_text + '</span> <i class="fa fa-chevron-up"></i></p>' );
+				} );
+
+			}
+		}
+
+	}
+
+	fixedops.init();
+
+});

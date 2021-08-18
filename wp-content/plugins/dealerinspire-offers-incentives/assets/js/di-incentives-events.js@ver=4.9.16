@@ -1,0 +1,476 @@
+jQuery(document).ready(function ($) {
+  /**
+   * Manages event tracking for various UI interaction
+   * across the plugin
+   */
+  var IncentivesEvents = {
+    /** 
+     * Labels for the Claim This Offer button - the submit
+     * button on the form
+     */
+    claimVehicleSubmitLabels: {
+      'cash-offers': 'Cash Offer Claim Offer Submit',
+      'finance-offers': 'Finance Offers Claim Offer Submit',
+      'lease-offers': 'Lease Offers Claim Offer Submit',
+      'detail-offer': 'Detail Offer Claim Offer Submit'
+    },
+    /** 
+     * Labels for the Vehicle Details buttons
+     */
+    vehicleDetailsLabels: {
+      'cash-offers': 'Cash Offer Vehicle Details',
+      'finance-offers': 'Finance Offers Vehicle Details',
+      'lease-offers': 'Lease Offer Vehicle Details'
+    },
+    /** 
+     * Labels for the Claim This Offer Now button that opens
+     * the light box with the form
+     */
+    claimOfferLightboxToggleLabels: {
+      'cash-offers': 'Cash Offer Claim This Offer Now',
+      'finance-offers': 'Finance Offers Claim This Offer Now',
+      'lease-offers': 'Lease Offer Claim This Offer Now',
+      'detail-offer': 'Detail Offer Claim This Offer Now'
+    },
+    /** 
+     * Labels for events for when a user uses the side filters on
+     * any of the offer views
+     */
+    filterOfferLabels: {
+      'cash-offers': 'Filter Cash Offers',
+      'finance-offers': 'Filter Finance Offers',
+      'lease-offers': 'Filter Lease Offers'
+    },
+    detailsViewTrimChangeLabel: 'Details View Trim Change',
+    detailsViewBodyChangeLabel: 'Details View Body Change',
+    offersDisclosureLabel: 'Offers Disclosure Opened',
+    viewAdditionalTargetedIncentivesLabel: 'View Additional Targeted Incentives',
+    /**
+     * Listens for analytics event triggers to fire and
+     * push events to Roxanne and GA
+     */
+    listen: function () {
+      var self = this
+      $(document)
+        .on('vehicleDetailsClick', {
+          self: self
+        }, self.handleVehicleDetailsClick)
+        .on('claimOfferLightBoxOpening', {
+          self: self
+        }, self.handleClaimOfferLightBoxToggleClick)
+        .on('claimOfferFormSubmit', {
+          self: self
+        }, self.handleClaimVehicleSubmitClick)
+        .on('offerDataFetched', {
+          self: self
+        }, self.handleFilterOptionClick)
+        .on('detailsViewTrimChange', {
+          self: self
+        }, self.handleDetailsViewTrimChange)
+        .on('detailsViewBodyChange', {
+          self: self
+        }, self.handleDetailsViewBodyChange)
+        .on('offerDisclosureOpened', {
+          self: self
+        }, self.handleOfferDisclosureOpened)
+        .on('detailsViewClaimOfferLightBoxOpening', {
+          self: self
+        }, self.handleDetailsViewClaimOfferLightBoxOpening)
+        .on('viewAdditionalTargetedIncentives', {
+          self: self
+        }, self.handleViewAdditionalTargetedIncentivesClick)
+    },
+    /**
+     * Handles the click event push for the Vehicle Details button
+     * on the offer pages
+     * 
+     * @param event - the trigger event
+     * @param vehicle - object of vehicle data
+     */
+    handleVehicleDetailsClick: function (event, vehicle, clickEvent) {
+      var self = event.data.self
+      var view = self.getUrlParameter('view')
+      var clickElement = jQuery(clickEvent.target).closest('.listing-wrap').find('.listing-title');
+      var offer_title = clickElement ? clickElement.text().trim() : '';
+      var offer_data = {
+        offer: {
+          name: offer_title,
+          source: 'Offers and Incentives Plugin' 
+        }
+      };
+
+      self.sendToRoxanne(vehicle, 'click', self.vehicleDetailsLabels[view], offer_data)
+      self.sendToGA({
+        eventAction: 'click',
+        eventLabel: self.createVehicleGAEventLabel(vehicle, self.vehicleDetailsLabels[view])
+      })
+    },
+    /**
+     * Handles the click event for the Claim This Offer Now button 
+     * that toggles the #claim-vehicle light box to show
+     * 
+     * This function handles the claim offer button on the 
+     * listing views - NOT the details view for a specific
+     * year|make|model
+     *  
+     * @param event - the trigger event
+     * @param vehicle - object of vehicle data
+     */
+    handleClaimOfferLightBoxToggleClick: function (event, vehicle, clickEvent) {
+      var self = event.data.self
+      var view = self.getUrlParameter('view')
+      var clickElement = jQuery(clickEvent.target).closest('.listing-wrap').find('.listing-title');
+      var offer_title = clickElement ? clickElement.text().trim() : '';
+      var offer_data = {
+        offer: {
+          name: offer_title,
+          source: 'Offers and Incentives Plugin' 
+        }
+      };
+
+      self.sendToRoxanne(vehicle, 'click', self.claimOfferLightboxToggleLabels[view], offer_data)
+      self.sendToGA({
+        eventAction: 'click',
+        eventLabel: self.createVehicleGAEventLabel(vehicle, self.claimOfferLightboxToggleLabels[view])
+      })
+    },
+    /**
+     * Handles the click event for the Claim This Offer Now button 
+     * that toggles the #claim-vehicle light box to show
+     * 
+     * This function handles the claim offer button on the details view for a specific
+     * year|make|model
+     *  
+     * @param event - the trigger event
+     * @param vehicle - object of vehicle data
+     */
+    handleDetailsViewClaimOfferLightBoxOpening: function (event, vehicle, clickEvent) {
+      var self = event.data.self
+      var view = self.getUrlParameter('view')
+      var clickElement = jQuery(clickEvent.target).closest('.single-listing').find('.card-details h2');
+      var offer_title = clickElement ? clickElement.text().trim() : '';
+      var offer_data = {
+        offer: {
+          name: offer_title,
+          source: 'Offers and Incentives Plugin' 
+        }
+      };
+
+      self.sendToRoxanne(vehicle, 'click', self.claimOfferLightboxToggleLabels[view], offer_data)
+      self.sendToGA({
+        eventAction: 'click',
+        eventLabel: self.createVehicleGAEventLabel(vehicle, self.claimOfferLightboxToggleLabels[view])
+      })
+    },
+    /**
+     * Handles the click event for all various claim offer submit button.
+     * Uses the view param in the url to determine which kind of offer form
+     * is being submitted
+     * 
+     * This function handles the claim offer button on the 
+     * listing views - NOT the details view for a specific
+     * year|make|model
+     * 
+     * @param event - the trigger event
+     */
+    handleClaimVehicleSubmitClick: function (event) {
+      var self = event.data.self
+      var view = self.getUrlParameter('view')
+
+      /**
+       * Dont have a data attr with vehicle info to hook into
+       * in the form - building is from the .lightbox-info section
+       */
+      var vehicle = self.getVehicleFromLightBoxForm()
+
+      self.sendToRoxanne(vehicle, 'click', self.claimVehicleSubmitLabels[view])
+      self.sendToGA({
+        eventAction: 'click',
+        eventLabel: self.createVehicleGAEventLabel(vehicle, self.claimVehicleSubmitLabels[view])
+      })
+    },
+    /**
+     * Handles event pushes for hwne any of the side filters are
+     * clicked in any of the offer views
+     * 
+     * @param event - the trigger event 
+     * @param offerData - the feteched data for the offer results based on filters
+     *                    (including the selected filter data)
+     */
+    handleFilterOptionClick: function (event, offerData) {
+      var self = event.data.self
+
+      // If we have selected filters but not pagination, one of the Full Lineup
+      // 'View Available Offers' buttons was clicked - do nothing          
+      if (self.hasSelectedFilters(offerData) && !self.isEmpty(offerData.pagination)) {
+        var view = self.getUrlParameter('view')
+        self.sendToRoxanne(offerData, 'click', self.filterOfferLabels[view])
+        self.sendToGA({
+          eventAction: 'click',
+          eventLabel: self.createFilterGAEventLabel(offerData, self.filterOfferLabels[view])
+        })
+      }
+    },
+    /** 
+     * Handles pushing events for when a user changes trim 
+     * while on the details view
+     * 
+     * @param event - the trigger event
+     * @param vehicle - object of vehicle data
+     */
+    handleDetailsViewTrimChange: function (event, vehicle) {
+      var self = event.data.self
+
+      self.sendToRoxanne(vehicle, 'click', self.detailsViewTrimChangeLabel)
+      self.sendToGA({
+        eventAction: 'click',
+        eventLabel: self.createVehicleGAEventLabel(vehicle, self.detailsViewTrimChangeLabel)
+      })
+    },
+    /**
+     * Handles pushing events for whhen a user changes body style
+     * while on the details view 
+     *
+     * @param event - the trigger event
+     * @param vehicle - object of vehicle data
+     */
+    handleDetailsViewBodyChange: function (event, vehicle) {
+      var self = event.data.self
+
+      self.sendToRoxanne(vehicle, 'click', self.detailsViewBodyChangeLabel)
+      self.sendToGA({
+        eventAction: 'click',
+        eventLabel: self.createVehicleWithBodyEventLabel(vehicle, self.detailsViewBodyChangeLabel)
+      })
+    },
+    /**
+     * Handles pushing events when a user clicks on View Disclosure
+     * 
+     * @param event - the trigger event
+     * @param vehicle - object of vehicle data
+     */
+    handleOfferDisclosureOpened: function (event, vehicle) {
+      var self = event.data.self
+
+      self.sendToRoxanne(vehicle, 'click', self.offersDisclosureLabel)
+      self.sendToGA({
+        eventAction: 'click',
+        eventLabel: self.createVehicleWithBodyEventLabel(vehicle, self.offersDisclosureLabel)
+      })
+    },
+    /**
+     * Handles pushing events for clicks on the View Additional Targeted Incentives
+     * button on the details view
+     * 
+     * @param event - the trigger event
+     * @param vehicle - object of vehicle data
+     */
+    handleViewAdditionalTargetedIncentivesClick: function (event, vehicle) {
+      var self = event.data.self
+
+      self.sendToRoxanne(vehicle, 'click', self.viewAdditionalTargetedIncentivesLabel)
+      self.sendToGA({
+        eventAction: 'click',
+        eventLabel: self.createVehicleGAEventLabel(vehicle, self.viewAdditionalTargetedIncentivesLabel)
+      })
+    },
+    /**
+     * Formats a string to create an event label for a vehicle based 
+     * Google Analytics event
+     * 
+     * @param vehicle - object
+     * @param eventLabel - The label for the GA Event
+     * @return String - formatted GA Label
+     */
+    createVehicleGAEventLabel: function (vehicle, eventLabel) {
+      var label = [
+        'Label: ' + eventLabel,
+        'Action: click',
+        'Vehicle' + ': ' + vehicle.year + '|' + vehicle.make + '|' + vehicle.model + '|' + vehicle.trim
+      ]
+
+      return label.join(', ')
+    },
+    /**
+     * Calls the createVehicleGAEventLabel function and appends the body and model code
+     * to the end of the vehicle
+     * 
+     * @param vehicle - vehicle object
+     * @param eventLabel - the label for the GA event
+     * @return String - formatted GA label
+     */
+    createVehicleWithBodyEventLabel: function (vehicle, eventLabel) {
+      var self = this
+      return self.createVehicleGAEventLabel(vehicle, eventLabel) +
+        '|' + vehicle.body +
+        '|' + vehicle.modelCode
+    },
+    /**
+     * Formats a string to create an event label for when a user clicks on
+     * one of the side filters to sort offers
+     * 
+     * @param filters - object of filter data
+     * @param pages - number of result pages
+     * @param eventLabel - label based on current offer view 
+     */
+    createFilterGAEventLabel: function (offerData, eventLabel) {
+      var self = this,
+        filters = offerData.selected,
+        pages = offerData.pagination.total
+
+      var years = !self.isEmpty(filters.years) ? filters.years.join('|') : 'none',
+        makes = !self.isEmpty(filters.makes) ? filters.makes.join('|') : 'none',
+        models = !self.isEmpty(filters.models) ? filters.models.join('|') : 'none',
+        trims = !self.isEmpty(filters.trims) ? filters.trims.join('|') : 'none'
+
+      var label = [
+        'Label: ' + eventLabel,
+        'Action: click',
+        'Years: ' + years,
+        'Makes: ' + makes,
+        'Models: ' + models,
+        'Trims: ' + trims,
+        'Result Pages: ' + pages
+      ]
+
+      return label.join(', ')
+    },
+    /**
+     * Build the vehicle object from the info section at the
+     * top of the claim vehicle offer form
+     * 
+     * @return Object - vehicle
+     */
+    getVehicleFromLightBoxForm: function () {
+      var info = $('#claim-vehicle .lightbox-info')
+
+      return {
+        year: $(info).find($('.year')).text(),
+        make: $(info).find($('.make')).text(),
+        model: $(info).find($('.model')).text(),
+        trim: $(info).find($('.trim')).text(),
+      }
+    },
+    /**
+     * Parses the current url for a given parameter
+     * 
+     * @param param - the url param being searched for
+     * @return String - the value of the param being searched from 
+     */
+    getUrlParameter: function (param) {
+      var url = decodeURIComponent(window.location.search.substring(1)),
+        urlParams = url.split('&'),
+        paramName,
+        index;
+
+      for (index = 0; index < urlParams.length; index++) {
+        paramName = urlParams[index].split('=');
+
+        if (paramName[0] === param) {
+          return paramName[1] === undefined ? true : paramName[1];
+        }
+      }
+    },
+    /** 
+     * Parses the offer data to see if the user has selected any filters
+     * 
+     * @param offerData - data that is being parsed
+     * @return boolean
+     */
+    hasSelectedFilters: function (offerData) {
+      var self = this
+      var hasSelectedFilter = false
+
+      if (!self.isEmpty(offerData.selected)) {
+        $.each(offerData.selected, function (index, filter) {
+          if (filter.length > 0) {
+            // Found a selected filter
+            hasSelectedFilter = true
+            // Break out of the loop
+            return false
+          }
+        })
+      }
+
+      return hasSelectedFilter
+    },
+    /**
+     * Pushes an event to Google Analytics
+     * 
+     * @param eventData - object of data being sent to GA
+     * @param eventCategory - the category this event falls under
+     */
+    sendToGA: function (eventData, eventCategory) {
+      eventCategory = (eventCategory) ? eventCategory : 'Navigation'
+
+      if (typeof eventData == 'object') {
+        eventData.eventCategory = eventCategory
+      }
+
+      // for GA through google tag manager (added support for multiple GTM containers)
+      if ("ga" in window) {
+        jQuery.each(ga.getAll(), function (i, tracker) {
+          if (tracker) {
+            tracker.send("event", eventData);
+          }
+        });
+      } else {
+        // for hardcoded google analytics (analytics not registered in google tag manager)
+        if (window.ga) {
+          ga('send', 'event', eventData)
+        } else {
+          if (typeof window.console != 'undefined') {
+            console.warn('Google Analytics not found')
+          }
+        }
+      }
+    },
+    /**
+     * Send an event to Roxanne
+     * @param data - the data being sent
+     * @param name - the name of the event
+     * @param eventLabel - the event label
+     */
+    sendToRoxanne: function (vehicleData, name, eventLabel, offerData = {}) {
+      eventLabel = (eventLabel) ? eventLabel : 'Offer'
+
+      $(document).trigger('di_ev', {
+        'name': name,
+        'label': eventLabel,
+        'default_score': 0,
+        'custom_data': {
+            vehicleData,
+            offerData
+        }
+      })
+    },
+    /**
+     * Check if a given variable is empty
+     *  - any boolean value will return false, as the exist and always have a value
+     *  - any numeric value will return false, expect 0
+     * 
+     * @param obj - the variable being checked for emptiness 
+     * @return boolean 
+     */
+    isEmpty: function (obj) {
+      if (typeof obj === 'boolean') {
+        return false
+      }
+
+      if (typeof obj === 'number' && obj !== 0) {
+        return false
+      }
+      if (obj && obj.length > 0) {
+        return false
+      }
+
+      for (var key in obj) {
+        if (hasOwnProperty.call(obj, key)) return false
+      }
+
+      return true
+    }
+  }
+
+  IncentivesEvents.listen()
+})

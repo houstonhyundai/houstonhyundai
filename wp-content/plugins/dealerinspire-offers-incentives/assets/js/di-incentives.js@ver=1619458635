@@ -1,0 +1,1540 @@
+var DIOffersandIncentives = (function ($, window, document) {
+
+    var _ajaxURL = $('#offers-incentives-page').data('url')
+
+    var _defaultStart = 'full_lineup'
+    var _filterState = {
+        selectedYears: '',
+        selectedMakes: '',
+        selectedModels: '',
+        selectedTrims: ''
+    }
+    var _filterOpen = []
+    var _notFoundImage = '/wp-content/plugins/dealerinspire-offers-incentives/assets/images/not-found.jpg';
+
+    // Localized variables //
+    var _settings = di_incentives_settings
+    var _formMapping = di_incentives_form_mapping
+
+    /**
+     * Returns basic ajax call to offers API.
+     *
+     * @param {object} - params - parameters to be sent to the API.
+     */
+
+    var _fetchData = function (params) {
+        params = params || {}
+        return $.ajax({
+            url: _ajaxURL,
+            data: params,
+            error: function (jqXHR, exception) {
+                var msg = ''
+                if (jqXHR.status === 0) {
+                    msg = 'Could not connect. Verify Network.'
+                } else if (jqXHR.status == 404) {
+                    msg = 'Requested page not found. [404]'
+                } else if (jqXHR.status == 500) {
+                    msg = 'Internal Server Error [500].'
+                } else if (exception === 'parsererror') {
+                    msg = 'Requested JSON parse failed.'
+                } else if (exception === 'timeout') {
+                    msg = 'Time out error.'
+                } else if (exception === 'abort') {
+                    msg = 'Ajax request aborted.'
+                } else {
+                    msg = 'Uncaught Error.\n' + jqXHR.responseText
+                }
+                console.log(msg)
+                _showErrorScreen();
+            }
+        })
+    }
+
+
+    /**
+     * Useful function for retrieving data from the API and displaying in interface. Callback functions and history push state can also be manipulated.
+     *
+     * @param {string} tab - identifies which view is being called.
+     * @param {object} params - parameters to be sent to the APi.
+     * @param {function} callback - function to be called after ajax request is complete.
+     * @param {boolean} pushState - add entry to history state - default is false
+     */
+    var _loadView = function (tab, params, callback, pushState, loadScreen) {
+
+        pushState = (pushState != false)
+        loadScreen = (loadScreen != false)
+        if (loadScreen == true && $('#offers-incentives-page').length > 0) {
+            $('#offers-incentives-page').addClass('loading-offers')
+
+            var showLoadTimeout = setTimeout(function () {
+                $('#offers-incentives-page').addClass('show-load')
+            }, 200)
+        }
+
+        if (params.thumbnail) {
+            delete params.thumbnail
+        }
+
+        _fetchData(params).done(function (data) {
+            clearTimeout(showLoadTimeout);
+            _assembleTemplate(tab, data)
+
+            $(document).trigger('offerDataFetched', [data])
+
+            if (callback) {
+                callback(data)
+            }
+            if (pushState == true) {
+                historyPush(tab, params)
+            }
+            $('#offers-incentives-page').removeClass('loading-offers').removeClass('show-load');
+        })
+    }
+
+    /**
+     * Takes data from the API call and inserts it into the correct template. Returns the template in a string.
+     *
+     * @param {string} tab - identifies which view is being called.
+     * @param {object} data - data from the API call.
+     */
+    var _assembleTemplate = function (tab, data) {
+        if (tab !== '#targeted-offers' && tab !== '#cash-allowance' && tab !== '#offer-disclosure') {
+
+            $('.no-offers-screen').hide();
+            if (data.vehicles && data.vehicles.length == 0) {
+                _showErrorScreen()
+                return
+            }
+
+            var sidebar = _getTabID(tab).filterTemplate(data),
+                cards = _getTabID(tab).cardTemplate(data),
+                cards_container = $(tab + ' .card-container'),
+                sidebar_container = $(tab + ' .filter-container')
+            mobile_container = $(tab + ' .mobile-filters')
+
+            sidebar_container.html(sidebar)
+            cards_container.html(cards)
+
+        } else {
+            var lightbox = _getTabID(tab).template(data)
+            var container = $(tab)
+
+            container.html(lightbox)
+        }
+    }
+
+    function filterString(array, query) {
+        return array.filter(function (value) {
+            return value.toLowerCase().includes(query.toLowerCase())
+        })
+    }
+
+    /**
+     * Adds history push state to browser.
+     *
+     * @param {target} target - identifies which view is being called.
+     * @param {object} params - data used for the API call.
+     */
+    var historyPush = function (target, params) {
+        var stateData = {
+            view: target,
+            ajaxParams: params
+        }
+        var url = _buildURL(target, params)
+        history.pushState(stateData, null, url)
+    }
+
+    /**
+     * Builds URL query for history push state.
+     *
+     * @param {target} target - identifies which view is being called.
+     * @param {object} params - data used for the API call.
+     */
+    var _buildURL = function (target, params) {
+        var base = location.pathname
+        var url = base + '?view=' + target.replace("#", "")
+        $.each(params, function (k, v) {
+            if (v && (k !== 'action')) {
+                url += '&' + encodeURIComponent((target == '#detail-offer' || k == 'page') ? ('offer' + toUpperCaseFirst(k)) : k)
+                url += '=' + encodeURIComponent((k == 'page') ? (v + 1) : v)
+            }
+        })
+
+        return url
+    }
+
+    /**
+     * Finds what view the interface should show based on the URL. If there is no query in the URL, it selects the first view that is set in the admin.
+     * Loads view.
+     */
+    var _getStartTab = function () {
+        var startURL = window.location.href
+        var params = {}
+        var startTab = $('.offers-header .head-button').first().attr('href')
+
+        if ($(_settings['general']['starting_tab']).length > 0) {
+            startTab = _settings['general']['starting_tab'];
+        }
+
+        if (_getUrlParameter('view')) {
+            if ($('#' + _getUrlParameter('view')).length > 0) {
+                var startTab = '#' + _getUrlParameter('view')
+                var possibleParams = _getTabID(startTab).possibleParameters
+
+
+                possibleParams.forEach(function (param) {
+
+                    if (_getUrlParameter('offer' + toUpperCaseFirst(param))) {
+                        params[param] = _getUrlParameter('offer' + toUpperCaseFirst(param))
+                    } else if (_getUrlParameter(param)) {
+                        params[param] = _getUrlParameter(param)
+                    }
+
+                    // Set open filters
+                    if (startTab == '#cash-offers' || startTab == '#finance-offers' || startTab == '#lease-offers') {
+                        if (_getUrlParameter(param)) {
+                            var openFilter = param.replace("selected", "").toLowerCase()
+                            _filterOpen.push(openFilter)
+                            _filterState[param] = _getUrlParameter(param)
+                        }
+                    }
+                })
+            }
+
+        }
+
+        if (params.page) {
+            params.page = (params.page - 1)
+        }
+        params.action = _getTabID(startTab).action
+
+        _loadView(startTab, params, function () {
+            _updateHeadButtons(startTab)
+            $('.offers-header, .offers-views').fadeIn();
+        }, false)
+    }
+
+
+    /**
+     * Returns the value of a parameter key from the URL.
+     *
+     * @param {string} sParam - parameter key from URL
+     */
+    var _getUrlParameter = function (sParam) {
+        var sPageURL = decodeURIComponent(window.location.search.substring(1)),
+            sURLVariables = sPageURL.split('&'),
+            sParameterName,
+            i
+
+        for (i = 0; i < sURLVariables.length; i++) {
+            sParameterName = sURLVariables[i].split('=')
+
+            if (sParameterName[0] === sParam) {
+                return sParameterName[1] === undefined ? true : sParameterName[1]
+            }
+        }
+    }
+
+    /**
+     * Shows error screen
+     */
+    var _showErrorScreen = function () {
+        $('#offers-incentives-page').removeClass('loading-offers').removeClass('show-load')
+        $('.single-view').hide().removeClass('active')
+        $('#offers-incentives-page .no-offers-screen').fadeIn()
+    }
+
+
+    /**
+     * Updates the top buttons to the correct active/inactive state.
+     *
+     * @param {string} selectedTab - active tab
+     */
+    var _updateHeadButtons = function (selectedTab) {
+        $('.head-button').removeClass('active')
+        $('.head-button[href="' + selectedTab + '"]').addClass('active')
+        $('.single-view').hide().removeClass('active')
+        $(selectedTab).addClass('active').show()
+
+        // mobile
+        if ($('#mobile-tab-nav select').val() !== selectedTab) {
+            $('#mobile-tab-nav option').attr('selected', false)
+            $('#mobile-tab-nav option[value=' + selectedTab + ']').attr('selected', 'selected')
+        }
+    }
+
+    /**
+     * Function to return all events for the interface.
+     */
+    var _setupEvents = function () {
+
+        $('.listing-buttons .oi-button.oi-lightbox, #detail-offer .oi-button.oi-lightbox').on('click', triggerClaimOfferLightBoxOpening)
+
+        $('.shared-view').on('click', '.single-listing .listing-buttons .button.oi-button', triggerClaimOfferLightBoxOpening)
+
+        $('#claim-vehicle .gform_button.button').on('click', triggerClaimOfferSubmit)
+
+        $('.offers-header').on('click', '.head-button', headButtonToggle)
+
+        $('.shared-view')
+            .on('click', '.filter-bar .filter-title', function () {
+                $(this).parent().toggleClass('open');
+                var item = $(this).parent().find('.filter-options');
+                item.slideToggle()
+                _updateFilterState(_getParentTab($(this)))
+            })
+            .on('click', '.filter-bar .option', filterCards)
+            .on('click', '.filter-button', function () {
+                $('.fixed-bg, .fixed-wrap').fadeIn()
+            })
+            .on('click', '.fixed-close', function () {
+                $('.fixed-bg, .fixed-wrap').fadeOut()
+            })
+
+        $('.offers-views')
+            .on('click', '.view-details', showDetailsPage)
+            .on('click', '.view-details', triggerVehicleDetailsEvent)
+            .on('click', '.pagination .page', selectPage)
+            .on('click', '.cash-allowance-breakdown-button', showCashAllowance)
+            .on('click', '.view-disclosure-button', showOfferDisclosure)
+
+        $('#detail-offer').on('click', '.side-bar li:not(.active)', showDetailsPage)
+        $('#detail-offer').on('click', '.side-bar li:not(.active)', triggerDetailsViewSideBarEvent)
+
+        $('#detail-offer').on('click', '.view-current-inventory', triggerViewCurrentInventoryEvent)
+
+        $('#detail-offer').on('click', '.card-details h3', showDetailsPage)
+
+        $('#detail-offer').on('click', '.targeted-offers .di-modal', showTargetedIncentives)
+
+        $('#detail-offer').on('click', '.side-bar h2.visible-xs', function () {
+            $('#detail-offer .side-bar li').toggle()
+        })
+
+        $('#detail-offer').on('click', '.single-listing .button', triggerDetailsViewClaimOfferLightBoxOpening);
+
+        $('#detail-offer').on('change', '#select-body', selectBody)
+
+        $('#full-lineup').on('click', '.side-bar li', function () {
+            var tab = _getParentTab($(this))
+            var make = $(this).data('make')
+            _loadView(_getParentTab($(this)), {
+                action: 'listFullLineup',
+                selectedMake: make
+            })
+        })
+
+        $('#mobile-tab-nav').on('change', function (e) {
+            // e.preventDefault()
+            var target = $(this).find('select').val()
+            var params = _getParams(target)
+
+            _loadView(target, params, function () {
+                _updateHeadButtons(target)
+            })
+        })
+
+        $('body').on('click', '#targeted-offers .view-disclaimer', function () {
+            $(this).next().slideToggle()
+        })
+    }
+
+    /**
+     * Returns parameters for the specified tab
+     *
+     * @param {string} tab - the tab whose paramters are being retrieved
+     * @param {object} options - optional - any additional parameters needed
+     */
+    var _getParams = function (tab, options) {
+        var options = options || {}
+        var parameters = {}
+
+        if (tab == '#cash-offers' || tab == '#finance-offers' || tab == '#lease-offers')
+            var parameters = $.extend({}, _filterState)
+
+        if (options.page != undefined) {
+            parameters.page = options.page
+        } else {
+            parameters.page = 0
+        }
+        if (options.selectedMake != undefined) {
+            parameters.selectedMake = options.selectedMake;
+        }
+        parameters.action = _getTabID(tab).action
+
+        return parameters
+    }
+
+
+    /**
+     * Updates the _filterState variable to save what user has selected as filters
+     * This is for when users switch between tabs, their filtes are saved.
+     *
+     * @param {string} tab - the tab whose paramters are being retrieved - ex. #full-lineup
+     * @param {object} options - optional - any additional parameters needed
+     */
+    var _updateFilterState = function (tab, options) {
+        var offer_tab = tab
+        var isMobile = isMobile || false
+
+        // Gets current open filters
+        var open_filters = []
+        if (isMobile) {
+            $(offer_tab + ' .filter-bar.mobile-filter li.open').each(function () {
+                open_filters.push($(this).data('filter'))
+            })
+        } else {
+            $(offer_tab + ' .filter-bar.hidden-xs li.open').each(function () {
+                open_filters.push($(this).data('filter'))
+            })
+        }
+
+        // Set open filters
+        _filterOpen = open_filters
+        _filterState = {}
+
+        if (_getChecked(offer_tab, 'years')) {
+            _filterState.selectedYears = _getChecked(offer_tab, 'years')
+        }
+        if (_getChecked(offer_tab, 'makes')) {
+            _filterState.selectedMakes = _getChecked(offer_tab, 'makes')
+        }
+        if (_getChecked(offer_tab, 'models')) {
+            _filterState.selectedModels = _getChecked(offer_tab, 'models')
+        }
+        if (_getChecked(offer_tab, 'trims')) {
+            _filterState.selectedTrims = _getChecked(offer_tab, 'trims')
+        }
+    }
+
+    /**
+     * HTML templates used for rendering interfaces
+     * Full Lineup filters, Full Lineup cards
+     * Cash, Finance, Lease filters, Cash, Finance, Lease cards
+     * Detail filters, Detail cards
+     * Targeted Offers modal
+     * Cash Allowance modal
+     * Offer Disclosure modal
+     * Pagination
+     *
+     */
+    var _templates = {
+        fullLineupFilters: function (data) {
+            var output = ''
+
+            data.makes.forEach(function (make) {
+                output += '<li class="'
+                if (make == data.selectedMake) {
+                    output += 'primary active'
+                }
+                output += '" data-make="' + make + '">' + make + '</li>'
+            })
+
+            return output
+        },
+        fullLineupCards: function (data) {
+            var output = ''
+
+            data.vehicles.forEach(function (vehicle) {
+
+                var vehicle_obj = {
+                    year: vehicle.year,
+                    make: vehicle.make,
+                    model: vehicle.model
+                }
+
+                var thumbnail = vehicle.thumbnail
+                if (thumbnail.indexOf("notfound") >= 0) {
+                    thumbnail = _notFoundImage
+                }
+
+                var vehicle_title = vehicle.year + ' ' + vehicle.make + ' ' + vehicle.model
+
+                output += "<div class='single-listing' data-vehicle='" + JSON.stringify(vehicle_obj) + "'><div class='listing-wrap'>"
+                output += '<div class="listing-image-wrap"><div class="listing-image" style="background-image:url(' + thumbnail + ');"></div></div>'
+                output += '<h4 class="listing-title">' + vehicle_title + '</h4>'
+                output += '<div class="listing-details">'
+                if (_settings.general.inventory.starting_at == 'true') {
+                    output += '<span class="detail">' + _settings.strings.STARTING_AT
+                        + ' ' + vehicle.price + '</strong></span>'
+                }
+                if (_settings.general.inventory.in_stock == 'true') {
+                    output += '<span class="detail stock-num"><strong>' + vehicle.stock + '</strong> ' + _settings.strings.IN_STOCK + '</span>'
+                }
+                output += '</div>'
+                output += "<a href='#offer-details' class='view-details button oi-button offer-button'  data-vehicle='" + JSON.stringify(vehicle_obj) + "'>" + _settings.strings.AVAILABLE_OFFERS + '</a>'
+                output += '</div></div>'
+            })
+
+            // Pagination
+            output += _templates.pagination(data.pagination);
+
+            return output
+        },
+        cflFilters: function (data) {
+            var output = ''
+            var filter_labels = {
+                "years": _settings.strings.FILTER_YEAR,
+                "makes": _settings.strings.FILTER_MAKE,
+                "models": _settings.strings.FILTER_MODEL,
+                "trims": _settings.strings.FILTER_TRIM
+            }
+
+            $.each(data.filters, function (filter_key, filter_value) {
+                if ((filter_key == 'makes' && filter_value.length <= 1)) {
+                    return;
+                }
+                var isOpen = false;
+
+                if ($.inArray(filter_key, _filterOpen) != -1) {
+                    isOpen = true;
+                }
+
+                output += '<li data-filter="' + filter_key + '" ' + ((isOpen == true) ? ' class="open"' : '') + ' >'
+
+                $.each(filter_labels, function (key, val) {
+                    if (filter_key == key) {
+                        output += '<div class="filter-title">' + val + '</div>'
+                    }
+                })
+
+                if (filter_value.length > 0) {
+
+                    output += '<div class="filter-options"' + ((isOpen == true) ? ' style="display:block;"' : '') + ' >'
+
+                    filter_value.forEach(function (val) {
+                        isSelected = false
+                        output += '<span class="option">'
+
+                        data.selected[filter_key].forEach(function (selected) {
+                            if (selected == val) {
+                                isSelected = true
+                            }
+                        })
+
+                        if (isSelected) {
+                            output += '<input type="checkbox" value="' + val + '" checked="checked"></input>'
+                        } else {
+                            output += '<input type="checkbox" value="' + val + '"></input>'
+                        }
+                        output += '<label class="primary" for="option"></label>'
+                        output += val
+                        output += '</span>'
+
+                    })
+                }
+
+                output += '</div>'
+                output += '</li>'
+            })
+            return output
+        },
+        cflCards: function (data) {
+            var output = ""
+
+            // default labels
+            var labels = {
+                pretext: '',
+                price_label: '',
+                in_stock: _settings.strings.IN_STOCK,
+                starting_at: _settings.strings.STARTING_AT,
+                expires: _settings.strings.OFFER_EXPIRES,
+                details_button: _settings.strings.DETAILS,
+                claim_button: _settings.strings.CLAIM_OFFER,
+            }
+            data.vehicles.forEach(function (vehicle) {
+                var vehicle_title = vehicle.year + ' ' + vehicle.make + ' ' + vehicle.model + ' ' + vehicle.trim + ' ' + vehicle.body
+                if (vehicle.make == 'Honda') {
+                    vehicle_title = vehicle.year + ' ' + vehicle.make + ' ' + vehicle.model + ' ' + vehicle.trim
+                }
+
+                var offer = vehicle.cashOffer
+                var offer_type = 'cash'
+                var vehicle_obj = {
+                    year: vehicle.year,
+                    make: vehicle.make,
+                    model: vehicle.model,
+                    trim: vehicle.trim,
+                    body: vehicle.body,
+                    modelCode: vehicle.modelCode
+                }
+
+                var thumbnail = vehicle.thumbnail
+                if (thumbnail.indexOf("notfound") >= 0) {
+                    thumbnail = _notFoundImage
+                }
+
+                var vehicle_obj_form = vehicle_obj
+                vehicle_obj_form.thumbnail = thumbnail
+
+                if (data.type == 'listFinanceOffers') {
+
+                    offer = vehicle.financeOffer
+                    offer_type = 'finance'
+                    labels.pretext = _settings.strings.LABEL_FINANCE_FOR
+                    labels.price_label = _dstring(_settings.strings.TERMS, {
+                        'termLength': vehicle.financeOffer.terms,
+                    })
+                    if (vehicle.financeOffer.cashAllowance !== '$0') {
+                        labels.price_label += '</br><a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="finance">' + _dstring(_settings.strings.UP_TO, {
+                            'amount': vehicle.financeOffer.cashAllowance
+                        })
+                        labels.price_label += '</a>'
+                        if (data.filters.makes == 'Nissan' && vehicle.cashOfferDetails.length > 0) {
+                            for (var i = 0; i < vehicle.cashOfferDetails.length; i++) {
+                                labels.price_label += '<a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="finance" data-type="this-is-finance">'
+                                labels.price_label += '<span class="price-value">' + vehicle.cashOfferDetails[i].value + '</span> '
+                                labels.price_label += '<span class="price-label">' + vehicle.cashOfferDetails[i].name + '</span>'
+                                labels.price_label += '</a>'
+                            }
+
+                        }
+                    }
+                } else if (data.type == 'listLeaseOffers') {
+
+                    offer = vehicle.leaseOffer
+                    offer_type = 'lease'
+                    labels.pretext = _settings.strings.LABEL_LEASE_FOR
+                    labels.price_label = 'For ' + vehicle.leaseOffer.termLength + ' months'
+                    if (vehicle.leaseOffer.cashAllowance !== '$0') {
+                        labels.price_label += '</br><a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="lease">' + _dstring(_settings.strings.UP_TO, {'amount': offer.cashAllowance}) + '</a>'
+                        if (data.filters.makes == 'Nissan' && vehicle.cashOfferDetails.length > 0) {
+                            for (var i = 0; i < vehicle.cashOfferDetails.length; i++) {
+                                labels.price_label += '<a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="lease">'
+                                labels.price_label += '<span class="price-value">' + vehicle.cashOfferDetails[i].value + '</span> '
+                                labels.price_label += '<span class="price-label">' + vehicle.cashOfferDetails[i].name + '</span>'
+                                labels.price_label += '</a>'
+                            }
+                        }
+                    }
+                } else if (data.type == 'listCashOffers') {
+                    labels.pretext = _settings.strings.LABEL_GET_UP_TO
+                    labels.price_label = ''
+                    if (vehicle.cashOffer.value != '$0' && data.filters.makes != 'Nissan') {
+                        labels.price_label += '<a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="cash">' + _settings.strings.CASH_ALLOWANCE + '</a>'
+                    }
+                    if (data.filters.makes == 'Nissan' && vehicle.cashOfferDetails.length > 0) {
+                        for (var i = 0; i < vehicle.cashOfferDetails.length; i++) {
+                            labels.price_label += '<a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="cash">'
+                            labels.price_label += '<span class="price-value">' + vehicle.cashOfferDetails[i].value + '</span> '
+                            labels.price_label += '<span class="price-label">' + vehicle.cashOfferDetails[i].name + '</span>'
+                            labels.price_label += '</a>'
+                        }
+                    }
+                }
+
+                output += "<div class='single-listing' data-vehicle='" + JSON.stringify(vehicle_obj) + "'><div class='listing-wrap'>"
+                output += '<h4 class="listing-title">' + vehicle_title + '</h4>'
+
+                output += '<div class="listing-image-wrap"><div class="cfl-image" style="background-image:url(' + thumbnail + ');"></div></div>'
+                output += '<div class="oi-pricing">'
+                output += '<span class="pre-text primary">' + labels.pretext + '</span>'
+                output += '<div class="lease-pricing"><h3 class="price">' + offer.value + '</h3>'
+                if (_settings.strings.OFFER_VALUE_UNIT && offer_type === 'lease') {
+                    output += '<sub class="value-unit">' + _settings.strings.OFFER_VALUE_UNIT + '</sub>'
+                }
+                output += '</div>'
+                output += '<div class="price-label">' + labels.price_label + '</div>'
+                if (offer.signingAmount) {
+                    output += '<div class="price-down">' + offer.signingAmount + ' down</div>'
+                }
+                output += '</div>'
+
+                output += '<div class="listing-details">'
+                if (_settings.general.inventory.starting_at == 'true') {
+                    output += '<span class="detail starting-at">' + labels.starting_at + ' <strong>' + vehicle.price + '</strong></span>'
+                }
+                if (_settings.general.inventory.in_stock == 'true') {
+                    output += '<span class="detail stock-num"><strong>' + vehicle.stock + '</strong> ' + labels.in_stock + '</span>'
+                }
+                output += '<span class="detail expiration">' + labels.expires + offer.expires + '</span>'
+
+                output += '<a href="#offer-disclosure" class="di-modal view-disclosure-button" data-offer-type="' + offer_type + '">View Disclosure</a>'
+                output += '</div>'
+
+                output += '<div class="listing-buttons">'
+                output += '<a href="#detail-offer" class="view-details button border-button">' + labels.details_button + '</a>'
+                output += "<a href='#claim-vehicle' class='button oi-button di-modal offer-button' data-vehicle='" + JSON.stringify(vehicle_obj_form) + "'>" + labels.claim_button + "</a>"
+                output += '</div>'
+
+                output += '</div></div>'
+            })
+            // Pagination
+            output += _templates.pagination(data.pagination);
+
+            return output
+        },
+        detailFilters: function (data) {
+            output = ""
+
+            output += '<h2 class="hidden-xs">' + data.selected.year + ' ' + data.selected.make + ' ' + data.selected.model + '</h2>'
+            output += '<h2 class="visible-xs">' + data.selected.year + ' ' + data.selected.make + ' ' + data.selected.model + '<span class="trim-body">' + data.selected.trim + ' ' + data.selected.body + '</span> <i class="fa fa-angle-down"></i></h2>'
+
+            data.trims.forEach(function (trim) {
+
+                var vehicle_obj = {
+                    year: data.selected.year,
+                    make: data.selected.make,
+                    model: data.selected.model,
+                    trim: trim.trim
+                }
+
+                output += "<li class='" + ((trim.trim == data.vehicle.trim) ? "active primary" : "") + "' data-vehicle='" + JSON.stringify(vehicle_obj) + "'>"
+                output += trim.trim + '<br>'
+                if (data.selected.model == 'Tacoma' || data.selected.model == 'Tundra') {
+                    if (trim.cabType) {
+                        output += '<ul class="body-styles">'
+                        output += '<h5>Available Styles:</h5>'
+                        trim.body.forEach(function (body) {
+                            var trimBody = body.name.toLowerCase()
+                            if (body.cabType) {
+                                output += '<li>' + body.driveTrain + ' ' + body.cabType + '</li>'
+                            }
+                        })
+                        output += '</ul>'
+                    }
+                }
+                if (_settings.general.inventory.starting_at == 'true') {
+                    output += '<div class="starting-at">'
+                    output += _settings.strings.STARTING_AT + ' <span class="price">' + trim.startingAt + '</span>'
+                    output += '</div>'
+                }
+                output += '</li>'
+            })
+            if (data.selected.make == 'Nissan') {
+                output += '<p>' + filterString(data.disclaimers, 'Example VIN') + '</p>'
+            }
+            return output
+        },
+        detailCards: function (data) {
+            var output = ''
+
+            var vehicle_title = data.selected.year + ' ' + data.selected.make + ' ' + data.selected.model + data.selected.trim + data.selected.body
+
+            var thumbnail = data.vehicle.thumbnail
+            if (thumbnail.indexOf("notfound") >= 0) {
+                thumbnail = _notFoundImage
+            }
+
+            var vobj = {
+                year: data.selected.year,
+                make: data.selected.make,
+                model: data.selected.model,
+                trim: data.selected.trim,
+                body: data.selected.body,
+                modelCode: data.selected.modelCode,
+                driveTrain: data.vehicle.driveTrain,
+                cabType: data.vehicle.cabType,
+                thumbnail: thumbnail
+            }
+            output += "<div class='single-listing' data-vehicle='" + JSON.stringify(vobj) + "'>"
+            output += '<div class="card-top">'
+            output += '<div class="card-details">'
+            if(data.selected.make === "Toyota") {
+                        {
+                            output += '<h2 class="hidden-xs">' + data.vehicle.trim
+                            if(data.vehicle.driveTrain) {
+                            output += ' ' + '<span class="trim">' + data.vehicle.driveTrain
+                            }
+                            if(data.vehicle.cabType) {
+                                output += ' ' + data.vehicle.cabType + '</span>'
+                            }
+                            output += '</h2>'
+                        }
+                    }
+            else {
+                output += '<h2 class="hidden-xs">' + data.vehicle.trim + ' <span class="trim">' + data.vehicle.body + '</span></h2>'
+            }
+            data.trims.forEach(function (trim) {
+                if (trim.trim == data.vehicle.trim) {
+                    if (trim.body.length > 1) {
+
+                        output += '<div class="change-body-text primary">Change Bodystyle <i class="fa fa-angle-down"></i></div>'
+                        output += '<select id="select-body">'
+
+                        trim.body.forEach(function (body) {
+                            output += '<option value="' + body.name + '" data-modelCode="' + body.modelCode + '"'
+                            if (body.modelCode == data.selected.modelCode) {
+                                output += 'selected'
+                            }
+                            output += '>'
+                            if(data.selected.model == 'Tacoma' || data.selected.model == 'Tundra') {
+                                if (body.driveTrain) {
+                                    output += body.driveTrain
+                                    if (body.cabType) {
+                                        output += ' ' + body.cabType
+                                    }
+                                }
+                            }
+                            else if (data.selected.make === 'Toyota') {
+                                if (body.driveTrain) {
+                                    output += body.driveTrain
+                                }
+                                else  {
+                                    output += body.name
+                                }
+                            }
+                            else  {
+                                output += body.name
+                            }
+
+                            if (_settings.general.inventory.starting_at == 'true') {
+                                output += ' starting at ' + body.startingAt
+                            }
+                            output += '</option>'
+                        })
+                        output += '</select>'
+                    }
+
+                }
+            })
+
+            if (_settings.general.inventory.starting_at == 'true') {
+                output += '<div class="detail starting-at">' + _settings.strings.STARTING_AT + '<span class="price">' + data.vehicle.startingAt + '</span></div>'
+            }
+            if (_settings.general.inventory.in_stock == 'true') {
+                output += '<span class="detail stock-num">' + data.vehicle.stock + ' ' + _settings.strings.IN_STOCK + '</span>'
+            }
+            if (_settings.strings.VEHICLE_DETAIL_FEES) {
+                output += '<span class="detail extra-line">' + _settings.strings.VEHICLE_DETAIL_FEES + '</span>'
+            }
+
+            output += '</div>'
+            output += '<div class="card-img">'
+
+            output += '<div class="image" style="background-image:url(' + thumbnail + ');"></div>'
+
+
+            output += '</div>'
+            output += '</div>'
+            output += '<div class="card-bottom">'
+            output += '<div class="payment-offers">'
+            output += '<div class="flex-row">'
+
+            if (data.vehicle.offers.cashOffer !== false) {
+                output += '<div class="single-payment-offer">'
+                output += '<div class="oi-pricing">'
+                output += '<span class="pre-text primary">' + _settings.strings.LABEL_GET_UP_TO + '</span>'
+                output += '<h3 class="price">' + data.vehicle.offers.cashOffer.value + '</h3>'
+                if (data.selected.make != 'Nissan') {
+                    output += '<div class="price-label"><a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="cash">' + _settings.strings.CASH_ALLOWANCE + '</a></div>'
+                }
+                if (data.selected.make == 'Nissan') {
+                    var cashOfferDetail = data.vehicle.cashOfferDetails.cashOffer
+                    for (i = 0; i < cashOfferDetail.length; i++) {
+                        output += '<div class="price-label"><a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="cash">'
+                        output += cashOfferDetail[i].value + ' '
+                        output += cashOfferDetail[i].name
+                        output += '</a></div>'
+                    }
+                }
+                output += '</div>'
+
+                output += '<div class="expiration">' + _settings.strings.EXPIRES + data.vehicle.offers.cashOffer.expires + '</div>'
+                output += '<div class="disclosure-text"><a href="#offer-disclosure" class="view-disclosure-button di-modal" data-offer-type="cash">' + _settings.strings.VIEW_DISCLOSURE + '</a></div>'
+                output += '</div>'
+            }
+
+            if (data.vehicle.offers.financeOffer !== false) {
+                output += '<div class="single-payment-offer">'
+                output += '<div class="oi-pricing">'
+                output += '<span class="pre-text primary">' + _settings.strings.LABEL_FINANCE_FOR + '</span>'
+                output += '<h3 class="price">' + data.vehicle.offers.financeOffer.value + '</h3>'
+                output += '<div class="price-label">' + _dstring(_settings.strings.TERMS, {
+                    'termLength': data.vehicle.offers.financeOffer.terms
+                })
+
+                if (data.vehicle.offers.financeOffer.cashAllowance !== '$0') {
+
+                    output += '<br/><a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="finance">' + _dstring(_settings.strings.UP_TO, {
+                        'amount': data.vehicle.offers.financeOffer.cashAllowance
+                    }) + '</a>'
+                    if (data.selected.make == 'Nissan') {
+                        var cashOfferDetail = data.vehicle.cashOfferDetails.financeOffer
+                        for (i = 0; i < cashOfferDetail.length; i++) {
+                            output += '<div class="price-label"><a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="finance">'
+                            output += cashOfferDetail[i].value + ' '
+                            output += cashOfferDetail[i].name
+                            output += '</a></div>'
+                        }
+                    }
+                }
+                output += '</div>'
+
+                output += '</div>'
+
+                output += '<div class="expiration">' + _settings.strings.EXPIRES + data.vehicle.offers.financeOffer.expires + '</div>'
+                output += '<div class="disclosure-text"><a href="#offer-disclosure" class="di-modal view-disclosure-button" data-offer-type="finance">' + _settings.strings.VIEW_DISCLOSURE + '</a></div>'
+                output += '</div>'
+            }
+
+            if (data.vehicle.offers.leaseOffer !== false) {
+                output += '<div class="single-payment-offer">'
+                output += '<div class="oi-pricing">'
+                output += '<span class="pre-text primary">' + _settings.strings.LABEL_LEASE_FOR + '</span>'
+                output += '<div class="lease-pricing"><h3 class="price">' + data.vehicle.offers.leaseOffer.value + '</h3>'
+                if (_settings.strings.OFFER_VALUE_UNIT) {
+                    output += '<sub class="value-unit">' + _settings.strings.OFFER_VALUE_UNIT + '</sub>'
+                }
+                output += '</div>'
+
+                output += '<div class="price-label">' + _dstring(_settings.strings.TERMS, {
+                    'termLength': data.vehicle.offers.leaseOffer.termLength
+                })
+                output += '<div class="price-down">' + data.vehicle.offers.leaseOffer.signingAmount + ' down</div>'
+
+                if (data.vehicle.offers.leaseOffer.cashAllowance !== '$0') {
+                    output += '<br/><a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="lease">' + _dstring(_settings.strings.UP_TO, {
+                        'amount': data.vehicle.offers.leaseOffer.cashAllowance
+                    }) + '</a>'
+                    if (data.selected.make == 'Nissan') {
+                        var cashOfferDetail = data.vehicle.cashOfferDetails.leaseOffer
+                        for (i = 0; i < cashOfferDetail.length; i++) {
+                            output += '<div class="price-label"><a href="#cash-allowance" class="di-modal cash-allowance-breakdown-button" data-offer-type="lease">'
+                            output += cashOfferDetail[i].value + ' '
+                            output += cashOfferDetail[i].name
+                            output += '</a></div>'
+                        }
+                    }
+                }
+                output += '</div>'
+
+                output += '</div>'
+
+                output += '<div class="expiration">' + _settings.strings.EXPIRES + data.vehicle.offers.leaseOffer.expires + '</div>'
+                output += '<div class="disclosure-text"><a href="#offer-disclosure" class="di-modal view-disclosure-button" data-offer-type="lease">' + _settings.strings.VIEW_DISCLOSURE + '</a></div>'
+                output += '</div>'
+            }
+
+            output += '</div>'
+
+            output += '<div class="card-buttons">'
+            output += '<div class="flex-row">'
+
+            if (data.inventoryURL) {
+                output += '<a href="' + data.inventoryURL + '" class="button oi-button view-current-inventory">' + _settings.strings.VIEW_CURRENT_INVENTORY + '</a>'
+            }
+
+            output += "<a href='#claim-vehicle' class='button oi-button di-modal' data-vehicle='" + JSON.stringify(vobj) + "'>" + _settings.strings.CLAIM_OFFER + "</a>"
+            output += '</div>'
+            output += '</div>'
+            output += '</div>'
+            output += '</div>'
+
+            output += '<div class="targeted-offers">'
+            output += "<a href='#targeted-offers' class='di-modal' data-vehicle='" + JSON.stringify(vobj) + "'>" + _settings.strings.VIEW_TARGETED_OFFERS + " <i class='fa fa-angle-right'></i></a>"
+            output += '</div>'
+            output += '</div>'
+
+            return output
+        },
+        targetedOffers: function (data) {
+            var output = ''
+            var title = data.vehicle.year + ' ' + data.vehicle.make + ' ' + data.vehicle.model + ' ' + data.vehicle.trim + ' ' + data.vehicle.body
+
+            var thumbnail = data.vehicle.thumbnail
+            if (thumbnail.indexOf("notfound") >= 0) {
+                thumbnail = _notFoundImage
+            }
+
+            output += '<div class="di-modal-head">'
+            output += '<div class="lightbox-info">'
+            output += '<div class="info-left">'
+            output += '<h3>' + title + '</h3>'
+            output += '</div>'
+            output += '<div class="info-right">'
+            output += '<div class="card-img"><img src="' + thumbnail + '" alt="' + title + '"></div>'
+            output += '</div>'
+            output += '</div>'
+            output += '</div>'
+            output += '<div class="di-modal-body"><h3>' + _settings.strings.TARGETED_OFFERS + '</h3>'
+            output += '<div class="incentive-list">'
+
+            if (data.offers.length > 0) {
+
+                data.offers.forEach(function (offer) {
+                    output += '<div class="single-incentive">'
+                    output += '<div class="offer-info">'
+                    output += '<div class="offer-overview">'
+                    output += '<h3>' + offer.name + '</h3>'
+                    output += '<span class="dates">' + _settings.strings.EFFECTIVE_DATES + ' ' + offer.validThru.start + ' - ' + offer.validThru.end + '</span>'
+                    output += '</div>'
+
+
+                    output += '<h3 class="price">' + offer.cashValue + '</h3>'
+
+                    output += '</div>'
+
+                    output += '<div class="disclaimer-info">'
+                    output += '<div class="view-disclaimer primary">' + _settings.strings.VIEW_DISCLOSURE_DETAILS + '</div>'
+
+                    output += '<div class="toggle-disclaimers">'
+                    output += '<span class="group-affiliation"><strong>' + _settings.strings.GROUP_AFFILIATION + ': </strong>' + offer.groupAffiliation + '</span>'
+                    output += '<span class="group-affiliation"><strong>' + _settings.strings.PREVIOUS_OWNERSHIP + ': </strong>' + offer.previousOwnership + '</span>'
+
+                    offer.details.forEach(function (detail) {
+                        output += '<p>' + detail + '</p>'
+                    })
+                    output += '</div>'
+                    output += '</div>'
+                    output += '</div>'
+                })
+            } else {
+                output += 'Sorry, there are no available targeted incentives for this vehicle at the moment.'
+            }
+            output += '</div>'
+            output += '</div>'
+            return output
+        },
+        cashAllowance: function (data) {
+            var output = ''
+            var title = data.vehicle.year + ' ' + data.vehicle.make + ' ' + data.vehicle.model + ' ' + data.vehicle.trim + ' ' + data.vehicle.body
+
+            var thumbnail = data.vehicle.thumbnail
+            if (thumbnail.indexOf("notfound") >= 0) {
+                thumbnail = _notFoundImage
+            }
+
+            var vobj = {
+                year: data.vehicle.year,
+                make: data.vehicle.make,
+                model: data.vehicle.model,
+                trim: data.vehicle.trim,
+                body: data.vehicle.body,
+                thumbnail: thumbnail
+            }
+            output += '<div class="di-modal-head">'
+            output += '<div class="lightbox-info">'
+            output += '<div class="info-left">'
+            output += '<h3 class="title">' + title + '</h3>'
+            output += '<div class="oi-pricing">'
+            output += '<span class="pre-text primary">' + _settings.strings.LABEL_GET_UP_TO + '</span>'
+            output += '<h3 class="price">' + data.cashOffer.value + '</h3>'
+            output += '<div class="price-label">' + _settings.strings.TOTAL_CASH_ALLOWANCE + '</div>'
+            output += '</div>'
+            output += '</div>'
+            output += '<div class="info-right">'
+            output += '<div class="card-img"><img src="' + thumbnail + '" alt="' + title + '"></div>'
+            output += '</div>'
+            output += '</div>'
+            output += '</div>'
+            output += '<div class="di-modal-body">'
+            output += '<div class="price-stack">'
+            data.cashOfferDetails.forEach(function (detail) {
+                output += '<div class="single-price">'
+                output += '<span class="price-label>">' + detail.name + '</span>'
+                output += '<span class="price-value">' + detail.value + '</span>'
+                output += '</div>'
+            })
+            output += '<div class="total-price single-price">'
+            output += '<span class="price-label">' + _settings.strings.TOTAL_CASH_ALLOWANCE + '</span>'
+            output += '<span class="price-value">' + data.cashOffer.value + '</span>'
+            output += '</div>'
+            output += '</div>'
+
+            output += '<div class="disclaimer-stack">'
+            data.disclaimers.forEach(function (disclaimer) {
+                output += '<p>' + disclaimer + '</p>'
+            })
+            output += '</div>'
+
+            output += '<div class="card-buttons">'
+            output += '<div class="flex-row">'
+
+            if (data.inventoryURL) {
+                output += '<a href="' + data.inventoryURL + '" class="button oi-button">' + _settings.strings.VIEW_CURRENT_INVENTORY + '</a>'
+            }
+
+            output += "<a href='#claim-vehicle' class='button oi-button di-modal' data-vehicle='" + JSON.stringify(vobj) + "'>" + 'Claim This Offer Now' + "</a>"
+            output += '</div>'
+            output += '</div>'
+
+            output += '</div>'
+            return output
+        },
+        offerDisclosure: function (data) {
+            var output = ''
+            output += '<div class="di-modal-body">'
+            output += '<div class="disclosures">'
+            if (data.disclaimers.length > 0) {
+                data.disclaimers.forEach(function (disclaimer) {
+                    output += '<p>' + disclaimer + '</p>'
+                })
+            } else {
+                if (_settings.strings.CUSTOM_DISCLOSURE) {
+                    output += '<p>' + _settings.strings.CUSTOM_DISCLOSURE.split("\n").join('</p><p>') + '</p>';
+                } else {
+                    output += '<p>' + _settings.strings.NO_DISCLOSURES + '</p>'
+                }
+            }
+
+            if (data.offerType === 'lease' && _settings.strings.CUSTOM_LEASE_OFFER_DISCLOSURE) {
+                output += '<p>' + _dstring(_settings.strings.CUSTOM_LEASE_OFFER_DISCLOSURE, {'leasePrice': data.vehicle.startingAt}) + '<p>'
+            }
+
+            output += '</div>'
+            output += '</div>'
+            return output
+        },
+        pagination: function (pagination) {
+            var total = parseInt(pagination.total)
+
+            var current = parseInt(pagination.current)
+            var output = ''
+
+            if (total > 1) {
+
+                output += '<div class="pagination">'
+                output += '<span class="page' + ((current == 0) ? ' disabled' : '') + '" data-page="previous"><i class="fa fa-angle-left"></i></span>'
+
+                if (current < 4 || (current == 4 && total == 4)) {
+                    var max_page = (total <= 4) ? total : '5'
+                    for (var i = 0; i < max_page; i++) {
+
+                        output += '<span class="page' + (((i) == current) ? ' current' : '') + '" data-page="' + (i) + '">' + (i + 1) + '</span>'
+                    }
+                    if (total > 4) {
+                        if (total > 5) {
+                            output += '<span class="page disabled">...</span>'
+                        }
+                        output += '<span class="page" data-page="' + total + '">' + (total + 1) + '</span>'
+                    }
+                } else if ((current >= 4) && (current <= (total - 4))) {
+                    output += '<span class="page" data-page="0">1</span>'
+                    output += '<span class="page disabled">...</span>'
+
+                    for (var i = (current - 1); i <= (current + 1); i++) {
+                        output += '<span class="page' + (((i) == current) ? ' current' : '') + '" data-page="' + (i) + '">' + (i + 1) + '</span>'
+                    }
+
+                    output += '<span class="page disabled">...</span>'
+                    output += '<span class="page" data-page="' + total + '">' + (total + 1) + '</span>'
+                } else if (current > (total - 4) && (total > 4)) {
+                    output += '<span class="page" data-page="0">1</span>'
+                    if (total > 5) {
+                        output += '<span class="page disabled">...</span>'
+                    }
+                    for (var i = (total - 4); i <= total; i++) {
+                        output += '<span class="page' + (((i) == current) ? ' current' : '') + '" data-page="' + (i) + '">' + (i + 1) + '</span>'
+                    }
+                }
+
+                output += '<span class="page' + ((current == (total - 1) ? ' disabled' : '')) + '" data-page="next"><i class="fa fa-angle-right"></i></span>'
+                output += '</div>'
+
+            }
+
+            return output
+
+        }
+
+    }
+
+    /**
+     * Object that contains properties of each tab.
+     * Helps for setting templates and getting correct parameters
+     *
+     */
+    var _tabs = {
+        "full_lineup": {
+            action: "listFullLineup",
+            filterTemplate: _templates.fullLineupFilters,
+            cardTemplate: _templates.fullLineupCards,
+            possibleParameters: ["selectedMake", "page"]
+        },
+        "cash_offers": {
+            action: "listCashOffers",
+            filterTemplate: _templates.cflFilters,
+            cardTemplate: _templates.cflCards,
+            possibleParameters: ["selectedYears", "selectedMakes", "selectedModels", "selectedTrims", "page"]
+        },
+        "finance_offers": {
+            action: "listFinanceOffers",
+            filterTemplate: _templates.cflFilters,
+            cardTemplate: _templates.cflCards,
+            possibleParameters: ["selectedYears", "selectedMakes", "selectedModels", "selectedTrims", "page"]
+
+        },
+        "lease_offers": {
+            action: "listLeaseOffers",
+            filterTemplate: _templates.cflFilters,
+            cardTemplate: _templates.cflCards,
+            possibleParameters: ["selectedYears", "selectedMakes", "selectedModels", "selectedTrims", "page"]
+        },
+        "detail_offer": {
+            action: "detailVehicleOffers",
+            filterTemplate: _templates.detailFilters,
+            cardTemplate: _templates.detailCards,
+            possibleParameters: ["year", "make", "model", "trim", "body"]
+        },
+        "targeted_offers": {
+            action: "detailTargetedOffers",
+            template: _templates.targetedOffers
+        },
+        "cash_allowance": {
+            action: "detailCashAllowance",
+            template: _templates.cashAllowance
+        },
+        "offer_disclosure": {
+            action: "detailOfferDisclaimer",
+            template: _templates.offerDisclosure
+        }
+    }
+
+    // HELPER FUNCTIONS
+
+    /**
+     * Returns corresponding _tabs object depending on the id passed.
+     *
+     * @param {string} id - tab ID (ex. #full-lineup)
+     */
+    var _getTabID = function (id) {
+        var tabID = id.replace("#", "").replace("-", "_")
+
+        return _tabs[tabID]
+    }
+
+    /**
+     * Returns dynamic string. Replaces what is inside of the double brackets, find the value in the API, and replaces in the string.
+     *
+     * @param {string} orig_string - string needed to be replaced
+     * @param {obj} obj - object with the key of the text in {{}} and value of what data should replace it.
+     */
+    var _dstring = function (orig_string, obj) {
+        bracket_str = orig_string.match(/\{([^}]+)\}}/g)
+        bracket_str.forEach(function (str) {
+            $.each(obj, function (key, val) {
+                if (str.replace(/[{}]/g, '') == key) {
+                    orig_string = orig_string.replace(str, val)
+                }
+            })
+        })
+        return orig_string
+    }
+
+    /**
+     * Quick way of finding parent ID. Ex. returns #full-lineup
+     *
+     * @param {obj} el - element to find parent of.
+     */
+
+    var _getParentTab = function (el) {
+        var parent_tab = '#' + (el.closest('.single-view').attr('id'))
+        return parent_tab
+    }
+
+    /**
+     * Gets current checked filters
+     *
+     * @param {string} offer_tab - select which tab
+     * @param {string} option - select which option
+     */
+    var _getChecked = function (offer_tab, option) {
+        var checkboxesChecked = ""
+        var checkboxes = $(offer_tab).find('.filter-bar.hidden-xs li[data-filter="' + option + '"] input[type="checkbox"]:checked')
+
+        for (var i = 0; i < checkboxes.length; i++) {
+            if (checkboxesChecked != "") {
+                checkboxesChecked += ","
+            }
+            checkboxesChecked += $(checkboxes[i]).val()
+        }
+        return checkboxesChecked
+    }
+
+    /**
+     * Returns first letter of a string uppercased.
+     *
+     * @param {string} string - string to uppercase.
+     */
+    var toUpperCaseFirst = function (string) {
+        return string.charAt(0).toUpperCase() + string.slice(1)
+    }
+
+    ///// EVENTS //////
+
+    /**
+     * Toggles head button.
+     */
+    var headButtonToggle = function (e) {
+        e.preventDefault()
+        var target = e.target.hash
+        var params = _getParams(target)
+
+        if ($(this).hasClass('active') == false) {
+            $('.head-button').removeClass('active')
+            $(this).addClass('active')
+
+            _loadView(target, params, function () {
+                $('.single-view').hide().removeClass('active')
+                $(target).addClass('active').fadeIn()
+            })
+        }
+
+        // mobile
+        $('#mobile-tab-nav option').attr('selected', false)
+        $('#mobile-tab-nav option[value=' + target + ']').attr('selected', 'selected')
+    }
+
+    /**
+     * Filters cards for cash, finance, and lease offers and updates interface.
+     */
+    var filterCards = function (e) {
+        var isMobile = ($(this).closest('.mobile-filter').length > 0) ? true : false
+
+        var offer_tab = _getParentTab($(this))
+
+        var input = $(this).find($('input'))
+        var params = {}
+
+        var optionName = $(input).val()
+        var filterType = $(this).closest('li').data('filter')
+
+        if (input.attr('checked') == 'checked') {
+            input.removeAttr('checked')
+            if (isMobile) {
+                $(offer_tab + ' .filter-bar.hidden-xs input[value="' + input.val() + '"]').removeAttr('checked')
+            }
+        } else {
+            input.attr('checked', 'checked')
+            if (isMobile) {
+                $(offer_tab + ' .filter-bar.hidden-xs input[value="' + input.val() + '"]').attr('checked', 'checked')
+            }
+        }
+
+        _updateFilterState(offer_tab, isMobile)
+        params = _getParams(offer_tab)
+        _loadView(offer_tab, params)
+
+    }
+
+    /**
+     * Selects new page for offers and updates interface.
+     */
+    var selectPage = function () {
+        el = $(this)
+        if (!$(this).hasClass('disabled')) {
+            var offer_tab = _getParentTab($(this))
+            var goToPage = {
+                page: $(this).data('page')
+            }
+            if (el.data('page') == 'previous') {
+                goToPage.page = $(offer_tab + ' .pagination .page.current').data('page') - 1
+            }
+            if (el.data('page') == 'next') {
+                goToPage.page = $(offer_tab + ' .pagination .page.current').data('page') + 1
+            }
+
+            if (offer_tab == '#full-lineup') {
+                var currentMake = $('#full-lineup .filter-container li.active').data('make');
+                goToPage.selectedMake = currentMake;
+            }
+
+            var params = _getParams(offer_tab, goToPage)
+
+            $(offer_tab + ' .pagination .page').removeClass('current')
+
+            $(this).addClass('current')
+            scrollToTop()
+            _loadView(offer_tab, params)
+        }
+    }
+
+    // Emit custom events to listen for to track analytics
+    var triggerVehicleDetailsEvent = function (event) {
+        var vehicle = getVehicleParams(this)
+
+        $(document).trigger('vehicleDetailsClick', [vehicle, event])
+    }
+
+    var triggerDetailsViewSideBarEvent = function (event) {
+        var vehicle = getVehicleParams(this)
+
+        $(document).trigger('detailsViewTrimChange', [vehicle])
+    }
+
+    var triggerViewCurrentInventoryEvent = function () {
+        var vehicle = getVehicleParams(this)
+
+        $(document).trigger('viewCurrentInventoryLinkClicked', [vehicle])
+    }
+
+    var triggerClaimOfferLightBoxOpening = function () {
+        var vehicle = getVehicleParams(this)
+        $(document).trigger('claimOfferLightBoxOpening', [vehicle, event])
+    }
+
+    var triggerDetailsViewClaimOfferLightBoxOpening = function () {
+        var vehicle = getVehicleParams(this)
+
+        $(document).trigger('detailsViewClaimOfferLightBoxOpening', [vehicle, event])
+    }
+
+    var triggerClaimOfferSubmit = function () {
+        $(document).trigger('claimOfferFormSubmit')
+    }
+    // End Custom Even Emitters
+
+    /**
+     * Updates interface to show Details page.
+     */
+    var showDetailsPage = function (e) {
+        e.preventDefault()
+        var params = getVehicleParams(this)
+        params.action = _getTabID('#detail-offer').action
+
+        _loadView('#detail-offer', params, function () {
+            $('.head-button').removeClass('active')
+            $('.single-view').hide().removeClass('active')
+            $('#detail-offer').addClass('active').show()
+            scrollToTop()
+        })
+    }
+
+    var getVehicleParams = function (self) {
+        var params = {}
+        if ($(self).data('vehicle')) {
+            params = $(self).data('vehicle')
+        } else {
+            params = $(self).closest('.single-listing').data('vehicle')
+        }
+        return params
+    }
+
+    /**
+     * Details page - handles users selecting a new body.
+     */
+    var selectBody = function (e) {
+        var body = $(e.target).val()
+        var modelCode = $(e.target).find(":selected").data('modelcode')
+        var params = $(this).closest('.single-listing').data('vehicle')
+        params.action = _getTabID('#detail-offer').action
+        params.body = body
+        params.modelCode = modelCode
+
+        $(document).trigger('detailsViewBodyChange', [params])
+
+        _loadView('#detail-offer', params)
+    }
+
+    /**
+     * Gets data from the vehicle clicked and shows targeted incentives in a modal.
+     */
+    var showTargetedIncentives = function (e) {
+        var params = $(this).data('vehicle')
+        params.action = 'detailTargetedOffers'
+
+        $(document).trigger('viewAdditionalTargetedIncentives', [params])
+
+        _loadView('#targeted-offers', params, null, false)
+    }
+
+    /**
+     * Gets data from the vehicle clicked and shows cash allowance in a modal.
+     */
+    var showCashAllowance = function (e) {
+        var params = $(this).closest('.single-listing').data('vehicle')
+        params.action = 'detailCashAllowance'
+
+        var offerType = $(this).data('offer-type')
+        if (offerType) {
+            params.offerType = offerType
+        }
+
+        _loadView('#cash-allowance', params, null, false)
+    }
+
+    /**
+     * Gets data from the vehicle clicked and shows offer disclosure in a modal.
+     */
+    var showOfferDisclosure = function (e) {
+        var params = $(this).closest('.single-listing').data('vehicle')
+        params.action = 'detailOfferDisclaimer'
+
+        var offerType = $(this).data('offer-type')
+        if (offerType) {
+            params.offerType = offerType
+        }
+
+        $(document).trigger('offerDisclosureOpened', [params])
+        _loadView('#offer-disclosure', params, null, false)
+    }
+
+    var scrollToTop = function () {
+        if ($(window).scrollTop() > 450) {
+            $('html, body').animate({
+                scrollTop: 0
+            }, 400, function () {
+                $('#offers-incentives-page').removeClass('loading-offers').removeClass('show-load');
+            })
+        } else {
+            $('#offers-incentives-page').removeClass('loading-offers').removeClass('show-load');
+        }
+    }
+
+    // Public
+    return {
+        init: function () {
+            _setupEvents()
+            _getStartTab()
+            window.addEventListener('popstate', function (e) {
+                if (e.state != null) {
+                    _loadView(e.state.view, e.state.ajaxParams, function () {
+                        $('.head-button').removeClass('active')
+                        $('.head-button[href="' + e.state.view + '"]').addClass('active')
+                        $('.single-view').hide().removeClass('active')
+                        $(e.state.view).addClass('active').show()
+                    }, false)
+                }
+            })
+        },
+    }
+})(jQuery, this, this.document)
+
+
+jQuery(document).ready(function ($) {
+
+    DIOffersandIncentives.init()
+
+    document.addEventListener('beforeOpen.di.modal', function (e) {
+        var event = e.detail.event
+        var target = event.hash
+
+        var data = $(event).data('vehicle')
+        var modal = $(target)
+        if (target == '#claim-vehicle') {
+            $.each(data, function (k, v) {
+                var replacing = $(modal).find('*[data-populate="' + k + '"]')
+                if (replacing) {
+                    if (replacing.is('img')) {
+                        replacing.css('opacity', '0')
+                        replacing.load(function () {
+                            replacing.css('opacity', '1')
+                        }).attr('src', v)
+                    } else {
+                        replacing.text(v)
+                    }
+                }
+            })
+
+
+            //// Populating Form ////
+            var form = $('#claim-vehicle .gform_wrapper > form').attr('id')
+            var gform_id = form.substr(form.lastIndexOf("_") + 1)
+
+            var form_map = {};
+
+            // Year, Make, Model, Trim, Link
+            form_map[di_incentives_form_mapping.model_year] = data.year
+            form_map[di_incentives_form_mapping.make] = data.make
+            form_map[di_incentives_form_mapping.model] = data.model
+            form_map[di_incentives_form_mapping.trim] = data.trim + ' ' + data.body
+            form_map[di_incentives_form_mapping.link] = window.location.href
+            form_map[di_incentives_form_mapping.type] = "new"
+
+            $.each(form_map, function (k, v) {
+                $('#gform_' + gform_id + ' #input_' + gform_id + '_' + k).attr('value', v)
+            })
+        }
+    })
+})
